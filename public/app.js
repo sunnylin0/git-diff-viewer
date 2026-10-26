@@ -10,6 +10,8 @@ const state = {
   selectedCommits: [], // Array of CommitNode
   diffResults: new Map(), // key: from_to -> { files, insertions, deletions, rawStat }
   modalCommit: null,
+  activeBaselineCommit: null, // string | null (當前作用中基準 commitId)
+  rangeComparedMap: new Map(), // key: commitId -> { order: number }
 };
 
 // DOM Elements
@@ -166,16 +168,46 @@ function renderNextChunk() {
   for (let i = start; i < end; i++) {
     const commit = state.filteredCommits[i];
     const isSelected = selectedSet.has(commit.commitId);
+    const isBaseline = state.activeBaselineCommit === commit.commitId;
+    const comparedInfo = state.rangeComparedMap.get(commit.commitId);
+    const isCompared = !!comparedInfo;
 
     const card = document.createElement('div');
-    card.className = `node-card ${isSelected ? 'is-selected' : ''}`;
+    let cardClasses = 'node-card';
+    if (isSelected) cardClasses += ' is-selected';
+    if (isBaseline) cardClasses += ' is-active-baseline';
+    if (isCompared) cardClasses += ' is-range-compared';
+    card.className = cardClasses;
     card.id = `left-node-${commit.commitId}`;
     card.dataset.hash = commit.commitId;
 
-    // Simplified format: 20260424, 5dc285c5, Prepare 6.6.3 release, 8(files), 260(+), 38(-)
+    let prefixBadge = '';
+    if (isBaseline) {
+      prefixBadge = '<span class="baseline-indicator">[基準]</span>';
+    } else if (isCompared) {
+      prefixBadge = `<span class="range-order-badge">#${comparedInfo.order}</span>`;
+    }
+
+    let vsTagHtml = '';
+    if (isCompared && state.activeBaselineCommit) {
+      const cacheKey = `${state.activeBaselineCommit}_${commit.commitId}_${state.exclude}`;
+      const cachedDiff = state.diffResults.get(cacheKey);
+      if (cachedDiff) {
+        vsTagHtml = `<span class="vs-baseline-tag" id="vs-base-${commit.commitId}">vs 基準: ${cachedDiff.files}(files), <span class="vs-stat-ins">${cachedDiff.insertions}(+)</span>, <span class="vs-stat-del">${cachedDiff.deletions}(-)</span></span>`;
+      } else {
+        vsTagHtml = `<span class="vs-baseline-tag" id="vs-base-${commit.commitId}"><span class="vs-stat-loading">計算中...</span></span>`;
+        fetchDiff(state.activeBaselineCommit, commit.commitId).then(diff => {
+          if (state.activeBaselineCommit) {
+            updateVsBaselineTag(commit.commitId, diff);
+          }
+        });
+      }
+    }
+
     card.innerHTML = `
       <div class="node-body">
         <div class="node-simplified-line" title="${escapeHtml(commit.formattedLeft)}">
+          ${prefixBadge}
           <span class="node-date">${commit.date}</span>,
           <span class="node-hash">${commit.commitId}</span>,
           <span class="node-msg">${escapeHtml(commit.message || '(無訊息)')}</span>,
@@ -184,13 +216,11 @@ function renderNextChunk() {
             <span class="stat-ins">${commit.insertions}(+)</span>,
             <span class="stat-del">${commit.deletions}(-)</span>
           </span>
+          ${vsTagHtml}
         </div>
       </div>
       <div class="node-actions">
-        ${isSelected
-        ? `<button class="btn btn-sm btn-action-remove" data-action="remove" data-hash="${commit.commitId}">移除</button>`
-        : `<button class="btn btn-sm btn-action-add" data-action="add" data-hash="${commit.commitId}">加入</button>`
-      }
+        ${renderCardActions(commit.commitId, isSelected, isBaseline)}
       </div>
     `;
 
@@ -199,6 +229,86 @@ function renderNextChunk() {
 
   elLeftNodeList.appendChild(fragment);
   state.renderedCount = end;
+}
+
+function renderCardActions(commitId, isSelected, isBaseline) {
+  return `
+    ${isSelected
+      ? `<button class="btn btn-sm btn-action-remove" data-action="remove" data-hash="${commitId}">移除</button>`
+      : `<button class="btn btn-sm btn-action-add" data-action="add" data-hash="${commitId}">加入</button>`
+    }
+    <button class="btn btn-sm btn-action-base ${isBaseline ? 'is-active' : ''}" data-action="set-base" data-hash="${commitId}">
+      ${isBaseline ? '取消基準' : '基準'}
+    </button>
+  `;
+}
+
+function updateVsBaselineTag(targetCommitId, diff) {
+  const tag = document.getElementById(`vs-base-${targetCommitId}`);
+  if (!tag) return;
+  tag.innerHTML = `vs 基準: ${diff.files}(files), <span class="vs-stat-ins">${diff.insertions}(+)</span>, <span class="vs-stat-del">${diff.deletions}(-)</span>`;
+}
+
+function refreshLeftPanelDOM() {
+  const currentRendered = state.renderedCount;
+  const scrollTop = elLeftNodeList.scrollTop;
+  elLeftNodeList.innerHTML = '';
+  state.renderedCount = 0;
+
+  const targetCount = Math.max(currentRendered, state.CHUNK_SIZE);
+  const totalToRender = Math.min(targetCount, state.filteredCommits.length);
+
+  const prevChunk = state.CHUNK_SIZE;
+  state.CHUNK_SIZE = totalToRender;
+  renderNextChunk();
+  state.CHUNK_SIZE = prevChunk;
+
+  elLeftNodeList.scrollTop = scrollTop;
+}
+
+function clearBaseline() {
+  state.activeBaselineCommit = null;
+  state.rangeComparedMap.clear();
+  refreshLeftPanelDOM();
+  showToast('已取消基準');
+}
+
+async function setActiveBaseline(baseCommitId) {
+  const idx = state.allCommits.findIndex(c => c.commitId === baseCommitId);
+  if (idx === -1) return;
+
+  state.activeBaselineCommit = baseCommitId;
+  state.rangeComparedMap.clear();
+
+  // 取出後續最多 100 筆
+  const targets = state.allCommits.slice(idx + 1, idx + 201);
+  targets.forEach((c, i) => {
+    state.rangeComparedMap.set(c.commitId, { order: i + 1 });
+  });
+
+  refreshLeftPanelDOM();
+  showToast(`已設定基準: ${baseCommitId}，比對後續 ${targets.length} 筆節點`);
+
+  // 非同步批次計算 diff（併發 6 個連線）
+  queueBatchDiffs(baseCommitId, targets);
+}
+
+async function queueBatchDiffs(baseCommitId, targets) {
+  const concurrency = 6;
+  let cursor = 0;
+  async function worker() {
+    while (cursor < targets.length) {
+      if (state.activeBaselineCommit !== baseCommitId) return;
+      const targetCommit = targets[cursor++];
+      if (!targetCommit) break;
+      const diff = await fetchDiff(baseCommitId, targetCommit.commitId);
+      if (state.activeBaselineCommit === baseCommitId) {
+        updateVsBaselineTag(targetCommit.commitId, diff);
+      }
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, targets.length) }, () => worker());
+  await Promise.all(workers);
 }
 
 // Infinite scroll on left panel
@@ -227,6 +337,12 @@ elLeftNodeList.addEventListener('click', (e) => {
       addToCompare(commit);
     } else if (action === 'remove') {
       removeFromCompare(commitId);
+    } else if (action === 'set-base') {
+      if (state.activeBaselineCommit === commitId) {
+        clearBaseline();
+      } else {
+        setActiveBaseline(commitId);
+      }
     }
     return;
   }
@@ -379,7 +495,8 @@ function addToCompare(commit) {
     leftCard.classList.add('is-selected');
     const actions = leftCard.querySelector('.node-actions');
     if (actions) {
-      actions.innerHTML = `<button class="btn btn-sm btn-action-remove" data-action="remove" data-hash="${commit.commitId}">移除</button>`;
+      const isBaseline = state.activeBaselineCommit === commit.commitId;
+      actions.innerHTML = renderCardActions(commit.commitId, true, isBaseline);
     }
   }
 
@@ -396,7 +513,8 @@ function removeFromCompare(commitId) {
     leftCard.classList.remove('is-selected');
     const actions = leftCard.querySelector('.node-actions');
     if (actions) {
-      actions.innerHTML = `<button class="btn btn-sm btn-action-add" data-action="add" data-hash="${commitId}">加入</button>`;
+      const isBaseline = state.activeBaselineCommit === commitId;
+      actions.innerHTML = renderCardActions(commitId, false, isBaseline);
     }
   }
 

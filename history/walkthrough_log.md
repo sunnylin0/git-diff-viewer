@@ -75,4 +75,55 @@
   - `↓ diff 20091215, b179164c, 5(files), 305(+), 254(-)`
 - 驗證截圖留存於 `two_comparison_cards_1792989280914.png`。
 
+---
+## [2026-10-27 03:57] 左側清單作用中基準與 100 筆連續比對實作與驗證記錄
+
+### 變更摘要 (Change Summary)
+1. **樣式定義 (`public/styles.css`)**：
+   - 新增 `.btn-action-base`：專屬琥珀金黃色邊框與 hover 光暈效果。
+   - 新增 `.node-card.is-active-baseline`：金黃色背景漸層、高亮邊框與 `[基準]` 徽章。
+   - 新增 `.node-card.is-range-compared`：冷紫色調漸層底色與高亮邊框，附帶序號徽章 `.range-order-badge`（#1, #2...）。
+   - 新增 `.vs-baseline-tag`：醒目呈現與基準的累積 diff 統計（綠色新增、紅色刪除）。
+2. **前端邏輯與批次並行比對 (`public/app.js`)**：
+   - 擴充 `state` 支援 `activeBaselineCommit` 與 `rangeComparedMap`。
+   - 在左側每個 commit card 新增 `<button data-action="set-base">` 按鈕。
+   - 點擊基準按鈕即刻啟動 `setActiveBaseline()`，選取該節點後續最多 100 筆提交節點染上紫色。
+   - 透過 `queueBatchDiffs()` 採用可控併發（6 worker）向 `/api/diff` 發送累積 diff 計算，即算即填入 DOM，不阻塞頁面。
+   - 再次點擊已設定為基準的按鈕可立即呼叫 `clearBaseline()` 取消並還原預設樣式。
+   - 右側比對清單完全保持原狀不動。
+3. **版本防護 (`public/index.html`)**：
+   - 更新前端 script 標籤為 `app.js?v=3.0`。
+4. **領域與架構文檔**：
+   - 更新 [CONTEXT.md](file:///c:/GitHub/ai/git-diff-viewer/CONTEXT.md)（新增 Active Baseline 與 Baseline Range Comparison 定義）。
+   - 新增架構決策 [ADR-0004](file:///c:/GitHub/ai/git-diff-viewer/docs/adr/0004-active-baseline-range-comparison.md)。
+
+### 驗證結果 (Verification)
+- 透過瀏覽器子代理人（Browser Subagent）實測：
+  - 開啟頁面後點擊第一筆提交之「基準」按鈕。
+  - 第一筆卡片立即轉為金黃色高亮，顯示 `[基準]` 標記，按鈕切換為「取消基準」。
+  - 後續節點全數染上冷紫色調，並依序呈現 `#2`, `#3`, `#4`... 等序號徽章。
+  - 非同步累積 diff 迅速填入卡片（例如 `vs 基準: 4(files), 46(+), 5(-)`）。
+  - 右側比對清單維持「尚未選取節點」，完全不受影響。
+- 驗證截圖留存於 `baseline_activated_view_1793044653909.png`。
+
+---
+## [2026-10-27 04:33] 點擊「加入/移除」保留「基準」按鈕修復與驗證記錄
+
+### 故障根因 (Root Cause)
+- `addToCompare()` 與 `removeFromCompare()` 內部在切換左側卡片選取狀態時，直接將 `.node-actions` 的 `innerHTML` 覆寫為單一「加入」或「移除」按鈕，造成初始渲染的 `<button data-action="set-base">` 按鈕被沖刷遺失。
+
+### 修復方案 (Fix Applied)
+- 提取共用元件樣板函式 `renderCardActions(commitId, isSelected, isBaseline)`。
+- 統一在 `renderNextChunk()`、`addToCompare()`、`removeFromCompare()` 調用，傳遞目前是否為基準節點狀態。
+- 版本號更新至 `app.js?v=3.1`。
+
+### 驗證結果 (Verification)
+- 透過瀏覽器代理人實測驗證：
+  1. 點擊「加入」：按鈕變換為「移除」，旁邊「基準」按鈕完整保留。
+  2. 點擊「移除」：按鈕變換為「加入」，旁邊「基準」按鈕完整保留。
+  3. 先點「基準」再點「加入/移除」：「取消基準」按鈕持續維持，不會被覆蓋。
+- 驗證截圖留存於 `test_fix_button_preserved_1793046732078.png`。
+
+
+
 
