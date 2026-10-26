@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Git Log Diff Viewer</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+</head>
+
+<body>
+  <div class="app-container">
+    <!-- Top Bar -->
+    <header class="top-bar">
+      <div class="brand">
+        <div class="logo-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="18" cy="18" r="3"></circle>
+            <circle cx="6" cy="6" r="3"></circle>
+            <path d="M13 6h3a2 2 0 0 1 2 2v7"></path>
+            <line x1="6" y1="9" x2="6" y2="21"></line>
+          </svg>
+        </div>
+        <h1>Git Diff Log Viewer</h1>
+      </div>
+
+      <div class="top-controls">
+        <div class="input-group repo-group">
+          <label for="repoPath">倉庫路徑 (Repo)</label>
+          <input type="text" id="repoPath" value="c:\GitHub\ai\abcjs_663" spellcheck="false"
+            placeholder="請輸入本機 Git 倉庫路徑">
+        </div>
+
+        <div class="input-group exclude-group">
+          <label for="excludePattern">排除規則 (&lt;exclude&gt;)</label>
+          <input type="text" id="excludePattern"
+            value="':!*min.js' ':!dist/' ':!bin/' ':!*raphael*' ':!*.lock' ':!*prototype*' ':!*.graffle*' ':!*.pdf' ':!*package-lock*' ':!*.svg' ':!*test.html' ':!tests/' ':!docs/'"
+            spellcheck="false" placeholder="例如 ':!bin/' ':!dist/'">
+        </div>
+
+        <div class="top-actions">
+          <button id="btnApply" class="btn btn-primary" title="套用並載入提交紀錄 (Enter)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            <span>套用 (Apply)</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="main-content">
+      <!-- Left Panel: All Nodes -->
+      <section class="panel panel-left" id="leftSection">
+        <div class="panel-header">
+          <div class="panel-title-area">
+            <h2>所有提交節點</h2>
+            <span class="badge" id="leftCountBadge">0 筆</span>
+            <span class="order-badge">時間：由遠到近 &rarr;</span>
+          </div>
+          <div class="panel-filter">
+            <input type="text" id="leftSearch" placeholder="搜尋 Hash、訊息或日期..." spellcheck="false">
+          </div>
+        </div>
+
+        <div class="node-list-container" id="leftNodeList">
+          <div class="empty-state">點擊「套用」或按 Enter 載入節點資料...</div>
+        </div>
+      </section>
+
+      <!-- Right Panel: Comparison List -->
+      <section class="panel panel-right" id="rightSection">
+        <div class="panel-header">
+          <div class="panel-title-area">
+            <h2>比對清單</h2>
+            <span class="badge badge-accent" id="rightCountBadge">0 筆</span>
+            <span class="order-badge">相鄰節點鏈式比對</span>
+          </div>
+          <div class="panel-actions">
+            <button id="btnClearRight" class="btn btn-secondary btn-sm" title="清空右側比對清單">
+              清空
+            </button>
+          </div>
+        </div>
+
+        <div class="compare-list-container" id="rightNodeList">
+          <div class="empty-state">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="12" y1="18" x2="12" y2="12"></line>
+              <line x1="9" y1="15" x2="15" y2="15"></line>
+            </svg>
+            <p>尚未選取節點</p>
+            <p class="subtext">請由左側點擊「加入」按鈕，選取節點進行鏈式 Diff 比對</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Modal: Node Inspector (git show --stat) -->
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-label">COMMIT INSPECTOR</span>
+            <h3 id="modalCommitId">------</h3>
+          </div>
+          <button class="btn-close" id="btnModalClose" title="關閉 (Esc)">&times;</button>
+        </div>
+        <div class="modal-actions-bar">
+          <div class="modal-info-summary" id="modalSummaryText"></div>
+          <div class="modal-buttons">
+            <button id="btnModalToggleCompare" class="btn btn-sm btn-primary">加入比對</button>
+            <button id="btnModalCopyHash" class="btn btn-sm btn-secondary">複製 ID</button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <pre class="git-output" id="modalContent">載入中...</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Bar / Toast Notification -->
+    <div class="toast-container" id="toastContainer"></div>
+  </div>
+
+  <script src="app.js?v=2.0"></script>
+</body>
+
+</html>

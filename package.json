@@ -1,0 +1,15 @@
+{
+  "name": "git-diff-viewer",
+  "version": "1.0.0",
+  "description": "Git log diff visualizer GUI",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
